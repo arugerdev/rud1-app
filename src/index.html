@@ -1,12 +1,36 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>Hello World!</title>
-    <link rel="stylesheet" href="index.css" />
-  </head>
-  <body>
-    <h1>💖 Hello World!</h1>
-    <p>Welcome to your Electron application.</p>
-  </body>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de Control</title>
+  <style>
+    body { margin: 0; padding: 10px; background: black; color: white; display: flex; justify-content: space-between; }
+    button { background: #00aaff; color: white; border: none; padding: 5px 10px; cursor: pointer; }
+    .color-dot{
+      border-radius: 999999999px;
+      background-color: #333;
+      width: 8px;
+      height: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="vpnStatusDot" class="color-dot"></div>
+  <span id="status">VPN: Desconectada</span>
+  <button onclick="toggleVPN()">Conectar VPN</button>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+    function toggleVPN() {
+      ipcRenderer.send("toggle-vpn");
+    }
+    
+    ipcRenderer.on("vpn-status", (event, status) => {
+      console.log('ASL')
+      document.getElementById("status").innerText = `VPN: ${status}`;
+      document.getElementById("vpnStatusDot").style.backgroundColor = `${(status ? '#161' : '#611')}`;
+    });
+  </script>
+</body>
 </html>

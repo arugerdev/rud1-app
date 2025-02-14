@@ -32,7 +32,8 @@
   "dependencies": {
     "electron-log": "^5.2.4",
     "electron-squirrel-startup": "^1.0.1",
-    "exec-root": "^1.0.9"
+    "exec-root": "^1.0.9",
+    "ws": "^8.18.0"
   },
   "build": {
     "appId": "io.github.rud1-app",
