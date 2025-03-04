@@ -1,168 +1,128 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
-const { exec } = require('child_process');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { exec, spawn } = require('child_process');
 const path = require('path');
-const fs = require('fs');
 const sudo = require('exec-root')
-const log = require('electron-log');
 
-const options = {
-  name: 'Rud1',
-  icns: path.join(__dirname, 'assets', 'icon.icns'),
-};
+const tailscalePath = path.join(__dirname, 'resources', 'utils', 'tailscale.exe');
+
 
 let mainWindow;
-let controlView;
-
-console.log = log.log;
-Object.assign(console, log.functions);
-
-
-app.setAppLogsPath(path.join(app.getPath('userData'), 'logs'));
-
-ipcMain.on("toggle-vpn", (event) => {
-  console.log("Click recibido")
-
-  exec("wg-quick up wg0", (error, stdout) => {
-    if (error) {
-      console.error("Error al conectar VPN:", error);
-      event.reply("vpn-status", "Error");
-    } else {
-      console.log("VPN conectada:", stdout);
-      event.reply("vpn-status", "Conectada");
-    }
-  });
-});
-
+const options = {
+  name: 'Rud1App',
+  icns: '/src/assets/icon.icns'
+};
 app.on('ready', () => {
-  log.initialize();
-
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    show: false,
-    autoHideMenuBar: true,
-    fullscreen: false,
+    width: 1200,
+    height: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
       contextIsolation: true,
-    }
-  });
-
-  controlView = new BrowserView({
-    webPreferences: {
-      nodeIntegration: true, // Permite ejecutar código Node en la barra de control
+      nodeIntegration: false,
     },
+    autoHideMenuBar: true,
   });
 
-  mainWindow.maximize();
-  mainWindow.loadURL('https://rud1.vercel.app'); // Reemplaza con la URL de tu panel de administración
+  mainWindow.webContents.setUserAgent('rud1-electron-app');
+  mainWindow.loadURL('https://rud1.vercel.app');
 
-  mainWindow.setBrowserView(controlView);
-  controlView.setBounds({ x: 0, y: 0, width: 1920, height: 50 }); // Tamaño de la barra
-  controlView.webContents.loadURL(`file://${__dirname}/index.html`);
-
-  mainWindow.show();
-
-  setInterval(() => {
-    checkVPNStatus();
-    // isWireGuardRunning();
-  }, 500);
-
-  mainWindow.webContents.session.on('will-download', (event, item, webContents) => {
-    console.log('Descargando archivo:', item.getFilename());
-    const filePath = path.join(app.getPath('downloads'), 'wg0.conf');
-
-    item.setSavePath(filePath);
-
-    item.on('done', (event, state) => {
-
-      if (state === 'completed') {
-        console.log(`Descarga completada: ${filePath}`);
-
-        mainWindow.webContents.once('dom-ready', () => {
-          mainWindow.webContents.executeJavaScript("toast.sucess('test');")
-        })
-
-        connectVPN(filePath);
-
-      } else {
-        console.log(`Descarga fallida: ${state}`);
-
-        mainWindow.webContents.once('dom-ready', () => {
-          mainWindow.webContents.executeJavaScript("toast.error('test');")
-        })
-      }
+  ipcMain.on('connect-vpn', async (event) => {
+    console.log("ConnectVPN");
+  
+    return new Promise(async (resolve, reject) => {
+      const child = exec(`"${tailscalePath}" up --unattended --timeout 5s`, options);
+  
+      let stdoutData = '';
+  
+      child.stdout.on('data', (data) => {
+        stdoutData += data;
+        console.log(`VPN Output: ${data}`);
+  
+        // Detectamos si la salida contiene una URL de autenticación
+        const urlRegex = /(https:\/\/login\.tailscale\.com\/.*)/;
+        const match = data.match(urlRegex);
+  
+        if (match) {
+          console.log('Se necesita iniciar sesión en:', match[1]);
+  
+          // Abrimos una nueva ventana para iniciar sesión
+          const loginWindow = new BrowserWindow({
+            width: 800,
+            height: 600,
+            webPreferences: {
+              nodeIntegration: true
+            }
+          });
+  
+          loginWindow.loadURL(match[1]);
+  
+          loginWindow.on('close', () => {
+            console.log("Ventana de inicio de sesión cerrada");
+            resolve('Autenticación Completada');
+          });
+        }
+      });
+  
+      child.stderr.on('data', (data) => {
+        console.error(`VPN Error: ${data}`);
+      });
+  
+      child.on('close', (code) => {
+        console.log(`Proceso finalizado con código: ${code}`);
+        if (stdoutData.includes('Success.') || code === 0) {
+          console.log('VPN Conectada');
+          startVirtualHere();
+          resolve('Conectada');
+        } else {
+          reject('Error');
+        }
+      });
+  
+      child.on('error', (error) => {
+        console.error('Error al conectar VPN:', error);
+        reject('Error');
+      });
     });
   });
+  
 
-  function checkVPNStatus() {
-    exec('wg show interfaces', (error, stdout) => {
-      const isConnected = stdout.includes('wg0');
-      console.log(mainWindow.webContents)
-      mainWindow.webContents.send('vpn-status', isConnected);
-    });
-  }
-
-  function connectVPN(configPath) {
-
-    sudo.exec('tasklist | find /i "wireguard.exe" && taskkill /im wireguard.exe /F', options).finally(() => {
-
-      const wireguardPath = path.join(__dirname, 'resources', 'utils', 'wireguard.exe');
-
-      (async () => {
-        const { error, stdout, stderr } = await sudo.exec(`"${wireguardPath}" /installtunnelservice "${configPath}"`, options)
-        if (error) {
-          console.error(`Error al conectar la VPN: ${error.message}`);
-
-          mainWindow.webContents.once('dom-ready', () => {
-            mainWindow.webContents.executeJavaScript("toast.error('test');")
-          })
-
-          throw error
-        };
-        console.log(`VPN conectada: ${stdout}`);
-
-        mainWindow.webContents.once('dom-ready', () => {
-          mainWindow.webContents.executeJavaScript("toast.sucess('test');")
-        })
-
-        startVirtualHere();
-      })()
-    })
-
-
-  }
+  ipcMain.on('open-config', () => {
+    shell.openExternal('https://rud1.vercel.app/config');
+  });
 
   function startVirtualHere() {
-    sudo.exec('tasklist | find /i "vhserver.exe" && taskkill /im vhserver.exe /F', options).finally(() => {
-
-      const vhserverPath = path.join(__dirname, 'resources', 'utils', 'vhserver.exe');
-      const serverIP = '10.7.0.1'; // Reemplaza con la IP del servidor
-
-      (async () => {
-        const { error, stdout, stderr } = await sudo.exec(`"${vhserverPath}" -q ES-AR`, options)
-        if (error) {
-          console.error(`Error al iniciar VirtualHere Server: ${error.message}`);
-
-          throw error
-        };
-        console.log(`VirtualHere Server iniciado: ${stdout}`);
-
-      })()
-
-    }
-    )
+    exec('tasklist | findstr /i "vhserver.exe"', (err, stdout) => {
+      if (stdout) {
+        exec('taskkill /im vhserver.exe /F', () => {
+          launchVHServer();
+        });
+      } else {
+        launchVHServer();
+      }
+    });
   }
-});
 
-app.on('before-quit', () => {
-  sudo.exec('tasklist | find /i "wireguard.exe" && taskkill /im wireguard.exe /F', options);
-  sudo.exec('tasklist | find /i "vhserver.exe" && taskkill /im vhserver.exe /F', options);
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+  function launchVHServer() {
+    const vhserverPath = path.join(__dirname, 'resources', 'utils', 'vhserver.exe');
+    exec(`"${vhserverPath}" -q ES-AR`, (error) => {
+      if (error) {
+        console.error('Error al iniciar VirtualHere:', error);
+      } else {
+        console.log('VirtualHere iniciado');
+      }
+    });
   }
+
+  app.on("browser-window-created", (e, win) => {
+    win.removeMenu();
+  });
+
+  app.on('before-quit', () => {
+    exec(`"${tailscalePath}" down`, options)
+
+    exec('taskkill /im tailscale.exe /F');
+    exec('taskkill /im tailscale-ipn.exe /F');
+    exec('taskkill /im tailscaled.exe /F');
+    exec('taskkill /im vhserver.exe /F');
+  });
 });

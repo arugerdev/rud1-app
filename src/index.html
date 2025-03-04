@@ -3,34 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel de Control</title>
+  <title>Rud1 Panel</title>
   <style>
-    body { margin: 0; padding: 10px; background: black; color: white; display: flex; justify-content: space-between; }
-    button { background: #00aaff; color: white; border: none; padding: 5px 10px; cursor: pointer; }
-    .color-dot{
-      border-radius: 999999999px;
-      background-color: #333;
-      width: 8px;
-      height: 8px;
-    }
+    body { text-align: center; margin-top: 50px; }
+    button { margin: 10px; padding: 10px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <div id="vpnStatusDot" class="color-dot"></div>
-  <span id="status">VPN: Desconectada</span>
-  <button onclick="toggleVPN()">Conectar VPN</button>
-
-  <script>
-    const { ipcRenderer } = require("electron");
-    function toggleVPN() {
-      ipcRenderer.send("toggle-vpn");
-    }
-    
-    ipcRenderer.on("vpn-status", (event, status) => {
-      console.log('ASL')
-      document.getElementById("status").innerText = `VPN: ${status}`;
-      document.getElementById("vpnStatusDot").style.backgroundColor = `${(status ? '#161' : '#611')}`;
-    });
-  </script>
+  <h1>Rud1 VPN Panel</h1>
+  <div id="vpn-status">VPN: Desconectada</div>
+  <button id="connect-vpn">Conectar VPN</button>
+  <button id="open-config">Configuración</button>
+  <script src="renderer.js"></script>
 </body>
 </html>
