@@ -1,8 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
     // Expose secure API methods here
-    ipc: (message) => {
-        console.log('Received message:', message);
-        ipcRenderer.postMessage(message)
-    },
+    send: (channel, data) => ipcRenderer.send(channel, data),
+    receive: (channel, func) => ipcRenderer.on(channel, (event, ...args) => func(...args))
 });

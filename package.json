@@ -43,6 +43,15 @@
     "asarUnpack": [
       "main"
     ],
+    "extraResources": [
+      {
+        "from": "src/resources/",
+        "to": "resources/",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "files": [
       "main"
     ],
