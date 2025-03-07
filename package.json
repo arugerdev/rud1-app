@@ -7,7 +7,7 @@
   "icon": "./src/assets/icon.icns",
   "scripts": {
     "start": "electron-forge start",
-    "package": "electron-forge package",
+    "package": "electron-forge package --arch=x64,ia32,armv7l,arm64 --platform=linux,win32,darwin",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\""

@@ -3,27 +3,68 @@ const { exec } = require('child_process');
 const path = require('path');
 const util = require('util');
 
-const appPath = app.getAppPath();
-
-// RUTAS DEV
-// const tailscalePath = path.join(appPath, 'src', 'resources', 'utils', 'tailscale.exe');
-// const tailscaledPath = path.join(appPath, 'src', 'resources', 'utils', 'tailscaled.exe');
-// RUTAS PROD
-const tailscalePath = path.join(appPath, '..', 'utils', 'tailscale.exe');
-const tailscaledPath = path.join(appPath, '..', 'utils', 'tailscaled.exe');
-
-let loginWindow; // Declarar la variable global
-
-// Promisify exec for cleaner async handling
 const execPromise = util.promisify(exec);
+const appPath = app.getAppPath();
+const platform = process.platform; // 'win32', 'darwin', 'linux'
+
+// Detectar sistema operativo
+const isWindows = platform === 'win32';
+const isMac = platform === 'darwin';
+const isLinux = platform === 'linux';
 
 let mainWindow;
+
+// Rutas de los ejecutables
+const tailscalePath = isWindows ? path.join(appPath, '..', 'utils', 'tailscale.exe') : 'tailscale';
+const vhserverPath = isWindows ? path.join(appPath, '..', 'utils', 'vhserver.exe') : 'vhserver';
+
 const options = {
   name: 'Rud1App',
   icns: '/src/assets/icon.icns'
 };
 
+async function installDependencies() {
+  const execPromise = (cmd) => new Promise((resolve, reject) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`Error ejecutando comando: ${cmd}`, error);
+        reject(stderr);
+      } else {
+        console.log(`Comando ejecutado: ${cmd}`, stdout);
+        resolve(stdout);
+      }
+    });
+  });
+
+  try {
+    if (isLinux) {
+      console.log('Instalando dependencias en Linux...');
+      await execPromise('sudo apt-get update');
+      await execPromise('sudo apt-get install -y tailscale');
+      console.log('Tailscale instalado correctamente');
+      await execPromise('sudo wget https://www.virtualhere.com/sites/default/files/usbserver/vhusbdarm -O /usr/bin/vhserver');
+      await execPromise('sudo chmod +x /usr/bin/vhserver');
+      console.log('VirtualHere instalado correctamente y disponible como comando vhserver');
+    } else if (isMac) {
+      console.log('Instalando dependencias en macOS...');
+      await execPromise('brew install tailscale');
+      console.log('Tailscale instalado correctamente');
+      await execPromise('curl -o /usr/local/bin/vhserver https://www.virtualhere.com/sites/default/files/usbserver/vhusbdarml64');
+      await execPromise('chmod +x /usr/local/bin/vhserver');
+      await execPromise('sudo spctl --add --label "vhserver" /usr/local/bin/vhserver');
+      await execPromise('sudo spctl --enable --label "vhserver"');
+      await execPromise('sudo spctl --master-disable');
+      console.log('VirtualHere instalado correctamente y disponible como comando vhserver con Gatekeeper desactivado');
+    } else {
+      console.log('Sistema operativo no soportado para la instalación automática');
+    }
+  } catch (error) {
+    console.error('Error durante la instalación de dependencias:', error);
+  }
+}
+
 app.on('ready', () => {
+  installDependencies();
 
   mainWindow = new BrowserWindow({
     width: 1920,
@@ -36,31 +77,19 @@ app.on('ready', () => {
     autoHideMenuBar: true,
   });
 
-  mainWindow.webContents.setUserAgent('rud1-electron-app');
   mainWindow.loadURL('https://rud1.vercel.app');
   mainWindow.maximize();
   mainWindow.focus();
 
   ipcMain.on('connect-vpn', async (event) => {
-    exec('net start tailscale', (error) => {
-      if (error) {
-        console.error('Error al iniciar servicio Tailscale:', error);
-      }
-    });
-    exec(tailscaledPath, (error) => {
-      if (error) {
-        console.error('Error al iniciar servicio Tailscale:', error);
-      }
-    });
-
     try {
-      // Start tailscaled without monitor flag (fixing potential issue)
-      // await execPromise(`${tailscaledPath}`, {});
+      if (isWindows) {
+        await execPromise('net start tailscale');
+      } else if (isLinux || isMac) {
+        await execPromise('sudo systemctl start tailscaled');
+      }
 
-      // Connect to Tailscale VPN
-      const { stdout, stderr } = await execPromise(`${tailscalePath} up --unattended --timeout 120s --reset`, options);
-
-
+      const { stdout } = await execPromise(`${tailscalePath} up --unattended --timeout 120s --reset`, options);
       if (stdout.includes('Success.')) {
         console.log('VPN Conectada');
         startVirtualHere();
@@ -76,77 +105,27 @@ app.on('ready', () => {
 
   ipcMain.on('tailscale-status', async (event) => {
     try {
-      const { stdout, stderr } = await execPromise(`${tailscalePath} status`);
-
-      const result = parseTailscaleStatus(stdout, stderr);
+      const { stdout } = await execPromise(`${tailscalePath} status`);
+      const result = parseTailscaleStatus(stdout);
       event.reply('tailscale-status-reply', result);
     } catch (error) {
-      // Check for authentication URL
-      const urlRegex = /(https:\/\/login\.tailscale\.com\/.*)/;
-      const match = error.stdout.match(urlRegex);
-
-      if (match) {
-        console.log('Se necesita iniciar sesión en:', match[1]);
-
-        // Comprobar si la ventana de login ya está abierta
-        if (!loginWindow || loginWindow.isDestroyed()) {
-          // Si no está abierta o ha sido destruida, abrir una nueva ventana de login
-          loginWindow = new BrowserWindow({
-            width: 800,
-            height: 600,
-            webPreferences: { nodeIntegration: true }
-          });
-
-          loginWindow.loadURL(match[1]);
-
-          loginWindow.on('close', () => {
-            console.log("Ventana de inicio de sesión cerrada");
-            event.reply('vpn-status', 'Autenticación completada');
-            loginWindow = null; // Limpiar la referencia cuando se cierre la ventana
-          });
-        } else {
-          console.log('La ventana de login ya está abierta.');
-        }
-      }
-
-      console.error('Error al obtener estado de Tailscale:', error);
+      console.error('Error al obtener estado:', error);
       event.reply('tailscale-status-reply', { status: 'desconocido', ip: null });
     }
   });
+
   ipcMain.on('tailscale-down', async (event) => {
-    stopTailscale(event);
-  });
-
-  ipcMain.on('open-config', () => {
-    shell.openExternal('https://rud1.vercel.app/config');
-  });
-
-  function stopTailscale(event) {
-    exec(`${tailscalePath} down`, (error) => {
-      if (error) {
-        console.error('Error al desconectar VPN:', error);
-        if (event) event.reply('tailscale-down-reply', 'Error');
-        return;
-      }
+    try {
+      await execPromise(`${tailscalePath} down`);
       console.log('VPN Desconectada');
-      if (event) event.reply('tailscale-down-reply', 'Desconectada');
-    });
-  }
+      event.reply('tailscale-down-reply', 'Desconectada');
+    } catch (error) {
+      console.error('Error al desconectar:', error);
+      event.reply('tailscale-down-reply', 'Error');
+    }
+  });
 
   function startVirtualHere() {
-    exec('tasklist | findstr /i "vhserver.exe"', (err, stdout) => {
-      if (stdout) {
-        exec('taskkill /im vhserver.exe /F', () => {
-          launchVHServer();
-        });
-      } else {
-        launchVHServer();
-      }
-    });
-  }
-
-  function launchVHServer() {
-    const vhserverPath = path.join(__dirname, 'resources', 'utils', 'vhserver.exe');
     exec(`${vhserverPath} -q ES-AR`, (error) => {
       if (error) {
         console.error('Error al iniciar VirtualHere:', error);
@@ -156,41 +135,25 @@ app.on('ready', () => {
     });
   }
 
-  app.on("browser-window-created", (e, win) => {
-    win.removeMenu();
-  });
-
   app.on('before-quit', () => {
-    stopTailscale(null);
-    exec('taskkill /im tailscale.exe /F');
-    exec('taskkill /im tailscale-ipn.exe /F');
-    exec('taskkill /im tailscaled.exe /F');
-    exec('taskkill /im vhserver.exe /F');
+    exec(`${tailscalePath} down`);
+    if (isWindows) {
+      exec('taskkill /im vhserver.exe /F');
+    } else {
+      exec('pkill vhserver');
+    }
   });
 });
 
-function parseTailscaleStatus(output, error) {
-  if (output.includes("stopped") || error.includes("stopped")) {
-    return {
-      status: 'inactivo',
-      ip: null
-    };
+function parseTailscaleStatus(output) {
+  if (output.includes('stopped')) {
+    return { status: 'inactivo', ip: null };
   }
 
-  const lines = output.split('\n');
-  for (let line of lines) {
-    if (line.includes('active')) {
-      const parts = line.trim().split(/\s+/);
-      const ip = parts[0];
-      return {
-        status: 'activo',
-        ip: ip
-      };
-    }
+  const match = output.match(/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+  if (match) {
+    return { status: 'activo', ip: match[1] };
   }
 
-  return {
-    status: 'desconocido',
-    ip: null
-  };
+  return { status: 'desconocido', ip: null };
 }
