@@ -77,6 +77,7 @@ app.on('ready', () => {
     autoHideMenuBar: true,
   });
 
+  mainWindow.webContents.setUserAgent('rud1-electron-app');
   mainWindow.loadURL('https://rud1.vercel.app');
   mainWindow.maximize();
   mainWindow.focus();
