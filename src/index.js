@@ -4,7 +4,6 @@ const path = require('path');
 const util = require('util');
 
 const execPromise = util.promisify(exec);
-const appPath = app.getAppPath();
 const platform = process.platform; // 'win32', 'darwin', 'linux'
 
 // Detectar sistema operativo
@@ -14,9 +13,16 @@ const isLinux = platform === 'linux';
 
 let mainWindow;
 
-// Rutas de los ejecutables
-const tailscalePath = isWindows ? path.join(appPath, '..', 'utils', 'tailscale.exe') : 'tailscale';
-const vhserverPath = isWindows ? path.join(appPath, '..', 'utils', 'vhserver.exe') : 'vhserver';
+// const appPath = app.getAppPath();
+
+// const tailscalePath = isWindows ? path.join(appPath, 'src', 'resources', 'utils', 'tailscale.exe') : 'tailscale';
+// const tailscaledPath = isWindows ? path.join(appPath, 'src', 'resources', 'utils', 'tailscaled.exe') : 'tailscaled';
+// const vhserverPath = isWindows ? path.join(appPath, 'src', 'resources', 'utils', 'vhserver.exe') : 'vhserver';
+
+const tailscalePath = isWindows ? path.join(process.resourcesPath, 'utils', 'tailscale.exe') : 'tailscale';
+const tailscaledPath = isWindows ? path.join(process.resourcesPath, 'utils', 'tailscaled.exe') : 'tailscaled';
+const vhserverPath = isWindows ? path.join(process.resourcesPath, 'utils', 'vhserver.exe') : 'vhserver';
+
 
 const options = {
   name: 'Rud1App',
@@ -24,17 +30,14 @@ const options = {
 };
 
 async function installDependencies() {
-  const execPromise = (cmd) => new Promise((resolve, reject) => {
-    exec(cmd, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error ejecutando comando: ${cmd}`, error);
-        reject(stderr);
-      } else {
-        console.log(`Comando ejecutado: ${cmd}`, stdout);
-        resolve(stdout);
-      }
+  function execPromise(command, options = {}) {
+    return new Promise((resolve, reject) => {
+      exec(command, options, (error, stdout, stderr) => {
+        if (error) reject(stderr || error);
+        else resolve(stdout);
+      });
     });
-  });
+  }
 
   try {
     if (isLinux) {
@@ -63,6 +66,8 @@ async function installDependencies() {
   }
 }
 
+
+
 app.on('ready', () => {
   installDependencies();
 
@@ -82,18 +87,46 @@ app.on('ready', () => {
   mainWindow.maximize();
   mainWindow.focus();
 
+
+  const notification = new Notification({
+    title: tailscaledPath,
+    body: tailscalePath,
+  });
+
+  notification.show();
+
+  exec(`powershell -Command "Start-Process ${tailscaledPath} -WindowStyle Hidden -Verb RunAs"`, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`stderr: ${stderr}`);
+      return;
+    }
+    console.log(`stdout: ${stdout}`);
+  });
+
   ipcMain.on('connect-vpn', async (event) => {
     try {
       if (isWindows) {
-        await execPromise('net start tailscale');
+        await execPromise('net start tailscale').catch(() => { });
       } else if (isLinux || isMac) {
-        await execPromise('sudo systemctl start tailscaled');
+        await execPromise('sudo systemctl start tailscaled').catch(() => { });
       }
 
-      const { stdout } = await execPromise(`${tailscalePath} up --unattended --timeout 120s --reset`, options);
+      const { stdout } = await execPromise(`"${tailscalePath}" up --unattended --reset`, options);
       if (stdout.includes('Success.')) {
         console.log('VPN Conectada');
         startVirtualHere();
+
+        const notification = new Notification({
+          title: 'Rud1',
+          body: 'Vpn Conectada',
+        });
+
+        notification.show();
+
         event.reply('vpn-status', 'Conectada');
       } else {
         event.reply('vpn-status', 'Error');
@@ -106,19 +139,31 @@ app.on('ready', () => {
 
   ipcMain.on('tailscale-status', async (event) => {
     try {
-      const { stdout } = await execPromise(`${tailscalePath} status`);
+      const { stdout } = await execPromise(`"${tailscalePath}" status`);
       const result = parseTailscaleStatus(stdout);
       event.reply('tailscale-status-reply', result);
     } catch (error) {
+      if (error.stdout.includes('Tailscale is stopped')) {
+        event.reply('tailscale-status-reply', { status: 'inactivo', ip: 'inactivo' });
+        return
+      }
       console.error('Error al obtener estado:', error);
-      event.reply('tailscale-status-reply', { status: 'desconocido', ip: null });
+      event.reply('tailscale-status-reply', { status: 'desconocido', ip: 'desconocido' });
     }
   });
 
   ipcMain.on('tailscale-down', async (event) => {
     try {
-      await execPromise(`${tailscalePath} down`);
+      await execPromise(`"${tailscalePath}" down`);
       console.log('VPN Desconectada');
+
+      const notification = new Notification({
+        title: 'Rud1',
+        body: 'Vpn Desconectada',
+      });
+
+      notification.show();
+
       event.reply('tailscale-down-reply', 'Desconectada');
     } catch (error) {
       console.error('Error al desconectar:', error);
@@ -127,7 +172,7 @@ app.on('ready', () => {
   });
 
   function startVirtualHere() {
-    exec(`${vhserverPath} -q ES-AR`, (error) => {
+    exec(`"${vhserverPath}" -q ES-AR`, (error) => {
       if (error) {
         console.error('Error al iniciar VirtualHere:', error);
       } else {
@@ -137,7 +182,7 @@ app.on('ready', () => {
   }
 
   app.on('before-quit', () => {
-    exec(`${tailscalePath} down`);
+    exec(`"${tailscalePath}" down`);
     if (isWindows) {
       exec('taskkill /im vhserver.exe /F');
     } else {
